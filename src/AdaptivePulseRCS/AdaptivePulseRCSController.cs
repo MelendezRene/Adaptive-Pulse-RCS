@@ -38,6 +38,7 @@ namespace AdaptivePulseRCS
         {
             public ModuleRCS Module;
             public bool OriginalEnabled;
+            public float OriginalThrustPercentage;
             public readonly List<ThrusterModel> Thrusters = new List<ThrusterModel>();
 
             public Vector3 PositiveTorque;
@@ -60,7 +61,7 @@ namespace AdaptivePulseRCS
 
         public void Start()
         {
-            Debug.Log("[AdaptivePulseRCS] Beta 1 starting");
+            Debug.Log("[AdaptivePulseRCS] Beta 1.1 starting - MechJeb compatibility gate active");
             GameEvents.onVesselChange.Add(OnVesselChange);
             GameEvents.onVesselWasModified.Add(OnVesselModified);
             GameEvents.onVesselCreate.Add(OnVesselCreate);
@@ -139,6 +140,7 @@ namespace AdaptivePulseRCS
                     ModuleModel model = new ModuleModel();
                     model.Module = rcs;
                     model.OriginalEnabled = rcs.rcsEnabled;
+                    model.OriginalThrustPercentage = rcs.thrustPercentage;
 
                     BuildThrusterModels(model, rcs, com);
                     AccumulateAuthority(model, rcs);
@@ -525,10 +527,14 @@ namespace AdaptivePulseRCS
                 if (model.Module == null)
                     continue;
 
-                model.Module.rcsEnabled =
-                    on &&
-                    model.Selected &&
-                    model.OriginalEnabled;
+                // Never toggle rcsEnabled here. MechJeb and other guidance systems
+                // may use that flag to determine whether RCS authority exists.
+                model.Module.rcsEnabled = model.OriginalEnabled;
+
+                bool shouldFire = on && model.Selected && model.OriginalEnabled;
+                model.Module.thrustPercentage = shouldFire
+                    ? model.OriginalThrustPercentage
+                    : 0f;
             }
         }
 
@@ -538,8 +544,20 @@ namespace AdaptivePulseRCS
 
             foreach (ModuleModel model in modules)
             {
-                if (model.Module != null)
-                    model.Module.rcsEnabled = on && model.OriginalEnabled;
+                if (model.Module == null)
+                    continue;
+
+                model.Module.rcsEnabled = model.OriginalEnabled;
+                model.Module.thrustPercentage = on
+                    ? model.OriginalThrustPercentage
+                    : 0f;
+            }
+
+            if (!on)
+            {
+                selectedModuleCount = 0;
+                selectedForce = 0f;
+                selectedTorque = 0f;
             }
         }
 
@@ -547,11 +565,17 @@ namespace AdaptivePulseRCS
         {
             foreach (ModuleModel model in modules)
             {
-                if (model.Module != null)
-                    model.Module.rcsEnabled = model.OriginalEnabled;
+                if (model.Module == null)
+                    continue;
+
+                model.Module.rcsEnabled = model.OriginalEnabled;
+                model.Module.thrustPercentage = model.OriginalThrustPercentage;
             }
 
             gateOn = false;
+            selectedModuleCount = 0;
+            selectedForce = 0f;
+            selectedTorque = 0f;
         }
 
         private void ResetPulseState()
@@ -577,7 +601,8 @@ namespace AdaptivePulseRCS
                 return;
 
             if (Input.GetKeyDown(KeyCode.P) &&
-                (Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt)))
+                (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl)) &&
+                (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift)))
             {
                 showWindow = !showWindow;
             }
@@ -592,7 +617,7 @@ namespace AdaptivePulseRCS
                 GetInstanceID(),
                 window,
                 DrawWindow,
-                "Adaptive Pulse RCS - Beta 1"
+                "Adaptive Pulse RCS - Beta 1.1"
             );
         }
 
@@ -642,7 +667,7 @@ namespace AdaptivePulseRCS
                 ResetPulseState();
             }
 
-            GUILayout.Label("Alt+P: show/hide");
+            GUILayout.Label("Ctrl+Shift+P: show/hide");
             GUI.DragWindow();
         }
     }
