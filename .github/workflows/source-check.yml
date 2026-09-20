@@ -1,0 +1,17 @@
+name: Source check
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  repository-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify expected source files
+        run: |
+          test -f src/AdaptivePulseRCS/AdaptivePulseRCSController.cs
+          test -f src/AdaptivePulseRCS/AdaptivePulseRCS.csproj
+          test -f README.md
+          echo "Repository structure OK."

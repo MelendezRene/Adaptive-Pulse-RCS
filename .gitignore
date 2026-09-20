@@ -1,0 +1,7 @@
+bin/
+obj/
+*.user
+*.suo
+lib/*.dll
+GameData/AdaptivePulseRCS/Plugins/*.dll
+!GameData/AdaptivePulseRCS/Plugins/.gitkeep
