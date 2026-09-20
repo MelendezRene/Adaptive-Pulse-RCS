@@ -60,6 +60,7 @@ namespace AdaptivePulseRCS
 
         public void Start()
         {
+            Debug.Log("[AdaptivePulseRCS] Beta 1 starting");
             GameEvents.onVesselChange.Add(OnVesselChange);
             GameEvents.onVesselWasModified.Add(OnVesselModified);
             GameEvents.onVesselCreate.Add(OnVesselCreate);
@@ -120,8 +121,9 @@ namespace AdaptivePulseRCS
             if (vessel == null || vessel.parts == null || vessel.ReferenceTransform == null)
                 return;
 
-            Vector3d com = vessel.findWorldCenterOfMass();
+            Vector3 com = vessel.CoM;
             lastScanMass = SafeMass();
+            Debug.Log("[AdaptivePulseRCS] Scanning vessel " + vessel.vesselName + " mass=" + lastScanMass.ToString("F3") + " t");
 
             foreach (Part part in vessel.parts)
             {
@@ -144,6 +146,8 @@ namespace AdaptivePulseRCS
                     modules.Add(model);
                 }
             }
+
+            Debug.Log("[AdaptivePulseRCS] Scan complete modules=" + modules.Count + " thrusterTransforms=" + thrusterCount);
         }
 
         private void BuildThrusterModels(ModuleModel model, ModuleRCS rcs, Vector3d com)
@@ -310,6 +314,7 @@ namespace AdaptivePulseRCS
 
             nextPulse = CalculatePulseLength();
             pulseRemaining = nextPulse;
+            Debug.Log("[AdaptivePulseRCS] Pulse=" + nextPulse.ToString("F3") + "s selectedModules=" + selectedModuleCount + " force=" + selectedForce.ToString("F3") + " torque=" + selectedTorque.ToString("F3"));
             ApplySelectionGate(true);
         }
 
@@ -318,7 +323,7 @@ namespace AdaptivePulseRCS
             if (vessel == null || vessel.ReferenceTransform == null)
                 return;
 
-            Vector3d com = vessel.findWorldCenterOfMass();
+            Vector3 com = vessel.CoM;
             lastScanMass = SafeMass();
             thrusterCount = 0;
 
@@ -477,7 +482,7 @@ namespace AdaptivePulseRCS
             if (vessel == null || vessel.parts == null || vessel.parts.Count == 0)
                 return 1f;
 
-            Vector3d com = vessel.findWorldCenterOfMass();
+            Vector3 com = vessel.CoM;
             double weightedDistance = 0.0;
             double totalMass = 0.0;
 
