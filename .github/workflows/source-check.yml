@@ -1,17 +1,41 @@
-name: Source check
+name: Build Adaptive Pulse RCS
 
 on:
   push:
+    branches: [ main ]
   pull_request:
+  workflow_dispatch:
 
 jobs:
-  repository-check:
-    runs-on: ubuntu-latest
+  build:
+    runs-on: ubuntu-22.04
+
     steps:
       - uses: actions/checkout@v4
-      - name: Verify expected source files
+
+      - name: Download stripped KSP 1.12.5 libraries
         run: |
-          test -f src/AdaptivePulseRCS/AdaptivePulseRCSController.cs
-          test -f src/AdaptivePulseRCS/AdaptivePulseRCS.csproj
-          test -f README.md
-          echo "Repository structure OK."
+          wget --quiet https://github.com/KSPModdingLibs/KSPLibs/raw/main/KSP-1.12.5.zip -O /tmp/ksp.zip
+          unzip -q /tmp/ksp.zip -d /tmp/ksp
+
+      - name: Restore
+        run: dotnet restore src/AdaptivePulseRCS/AdaptivePulseRCS.csproj
+
+      - name: Build
+        run: dotnet build src/AdaptivePulseRCS/AdaptivePulseRCS.csproj -c Release -p:KSPBT_ManagedPath=/tmp/ksp/KSP_x64_Data/Managed --no-restore
+
+      - name: Verify DLL
+        run: |
+          test -f GameData/AdaptivePulseRCS/Plugins/AdaptivePulseRCS.dll
+          ls -lh GameData/AdaptivePulseRCS/Plugins/AdaptivePulseRCS.dll
+
+      - name: Package Beta
+        run: |
+          mkdir -p release
+          zip -r release/AdaptivePulseRCS-v0.3.0-b1.zip GameData/AdaptivePulseRCS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: AdaptivePulseRCS-v0.3.0-b1
+          path: release/AdaptivePulseRCS-v0.3.0-b1.zip
+          if-no-files-found: error
