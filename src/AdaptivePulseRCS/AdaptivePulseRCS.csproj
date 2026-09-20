@@ -5,24 +5,11 @@
     <AssemblyName>AdaptivePulseRCS</AssemblyName>
     <RootNamespace>AdaptivePulseRCS</RootNamespace>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
-    <OutputPath>..\..\GameData\AdaptivePulseRCS\Plugins\</OutputPath>
+    <KSPBT_ModRoot>$(MSBuildThisFileDirectory)..\..\GameData\AdaptivePulseRCS</KSPBT_ModRoot>
+    <KSPBT_ModPluginFolder>Plugins</KSPBT_ModPluginFolder>
   </PropertyGroup>
+
   <ItemGroup>
-    <Reference Include="Assembly-CSharp">
-      <HintPath>..\..\lib\Assembly-CSharp.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-    <Reference Include="UnityEngine">
-      <HintPath>..\..\lib\UnityEngine.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-    <Reference Include="UnityEngine.CoreModule">
-      <HintPath>..\..\lib\UnityEngine.CoreModule.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
-    <Reference Include="UnityEngine.IMGUIModule">
-      <HintPath>..\..\lib\UnityEngine.IMGUIModule.dll</HintPath>
-      <Private>false</Private>
-    </Reference>
+    <PackageReference Include="KSPBuildTools" Version="1.1.1" />
   </ItemGroup>
 </Project>
