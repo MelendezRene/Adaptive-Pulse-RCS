@@ -26,7 +26,7 @@ jobs:
       - name: Build
         env:
           KSP_ROOT: /tmp/ksp
-        run: dotnet build src/AdaptivePulseRCS/AdaptivePulseRCS.csproj -c Release --no-restore
+        run: dotnet build src/AdaptivePulseRCS/AdaptivePulseRCS.csproj -c Release -p:KSPBT_ManagedPath=/tmp/ksp/KSP_x64_Data/Managed --no-restore
 
       - name: Verify DLL
         run: |
