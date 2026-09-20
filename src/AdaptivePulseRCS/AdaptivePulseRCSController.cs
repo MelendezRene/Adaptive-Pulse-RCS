@@ -161,7 +161,7 @@ namespace AdaptivePulseRCS
 
             try
             {
-                powerFactor *= Mathf.Clamp01(rcs.thrustPercentage * 0.01f);
+                powerFactor *= Mathf.Clamp01(model.OriginalThrustPercentage * 0.01f);
             }
             catch { }
 
