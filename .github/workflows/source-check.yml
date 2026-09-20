@@ -19,10 +19,14 @@ jobs:
           unzip -q /tmp/ksp.zip -d /tmp/ksp
 
       - name: Restore
+        env:
+          KSP_ROOT: /tmp/ksp
         run: dotnet restore src/AdaptivePulseRCS/AdaptivePulseRCS.csproj
 
       - name: Build
-        run: dotnet build src/AdaptivePulseRCS/AdaptivePulseRCS.csproj -c Release -p:KSPBT_ManagedPath=/tmp/ksp/KSP_x64_Data/Managed --no-restore
+        env:
+          KSP_ROOT: /tmp/ksp
+        run: dotnet build src/AdaptivePulseRCS/AdaptivePulseRCS.csproj -c Release --no-restore
 
       - name: Verify DLL
         run: |
