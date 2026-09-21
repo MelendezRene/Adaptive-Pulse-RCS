@@ -8,11 +8,10 @@ namespace AdaptivePulseRCS
     public sealed class AdaptivePulseRCSController : MonoBehaviour
     {
         private const float MinPulse = 0.02f;
-        private const float MaxPulse = 0.80f;
-        private const float MinOffTime = 0.08f;
+        private const float MaxPulse = 0.35f;
+        private const float MinOffTime = 0.10f;
         private const float InputDeadband = 0.025f;
-        private const float ContinuousDemand = 0.90f;
-        private const float AuthorityEpsilon = 0.0001f;
+                private const float AuthorityEpsilon = 0.0001f;
 
         private Vessel vessel;
         private bool enabledController = true;
@@ -69,7 +68,7 @@ namespace AdaptivePulseRCS
 
         public void Start()
         {
-            Debug.Log("[AdaptivePulseRCS] Beta 1.2 starting - post-autopilot command pulsing active");
+            Debug.Log("[AdaptivePulseRCS] Beta 1.3 starting - always-pulsed post-autopilot control active");
             GameEvents.onVesselChange.Add(OnVesselChange);
             GameEvents.onVesselWasModified.Add(OnVesselModified);
             GameEvents.onVesselCreate.Add(OnVesselCreate);
@@ -298,20 +297,13 @@ namespace AdaptivePulseRCS
 
             float dt = TimeWarp.fixedDeltaTime;
 
-            if (demand >= ContinuousDemand)
-            {
-                gateOn = true;
-                pulseRemaining = 0f;
-                offRemaining = 0f;
-                nextPulse = 0f;
-            }
-            else if (gateOn)
+            if (gateOn)
             {
                 pulseRemaining -= dt;
                 if (pulseRemaining <= 0f)
                 {
                     gateOn = false;
-                    offRemaining = MinOffTime;
+                    offRemaining = CalculateOffTime(demand);
                 }
             }
             else if (offRemaining > 0f)
@@ -324,6 +316,7 @@ namespace AdaptivePulseRCS
                 pulseRemaining = nextPulse;
                 gateOn = true;
                 Debug.Log("[AdaptivePulseRCS] Pulse=" + nextPulse.ToString("F3") +
+                          "s off=" + CalculateOffTime(demand).ToString("F3") +
                           "s selectedModules=" + selectedModuleCount +
                           " force=" + selectedForce.ToString("F3") +
                           " torque=" + selectedTorque.ToString("F3"));
@@ -485,7 +478,7 @@ namespace AdaptivePulseRCS
             if (translationMagnitude > InputDeadband)
             {
                 float acceleration = selectedForce / Mathf.Max(0.01f, mass);
-                float desiredDeltaV = Mathf.Lerp(0.0025f, 0.15f, translationMagnitude);
+                float desiredDeltaV = Mathf.Lerp(0.0015f, 0.060f, translationMagnitude);
                 translationPulse = desiredDeltaV / Mathf.Max(0.0001f, acceleration);
             }
 
@@ -503,7 +496,7 @@ namespace AdaptivePulseRCS
                 }
                 catch { }
 
-                float desiredRateChange = Mathf.Lerp(0.0015f, 0.12f, rotationMagnitude);
+                float desiredRateChange = Mathf.Lerp(0.0010f, 0.045f, rotationMagnitude);
 
                 if (currentRate > desiredRateChange)
                     desiredRateChange *= 0.35f;
@@ -517,6 +510,13 @@ namespace AdaptivePulseRCS
             requested *= Mathf.Lerp(0.30f, 1.0f, overallDemand);
 
             return Mathf.Clamp(requested, MinPulse, MaxPulse);
+        }
+
+        private float CalculateOffTime(float demand)
+        {
+            // Strong commands get a shorter pause, but never become continuous.
+            // Fine control gets more coast time so the vessel response can settle.
+            return Mathf.Lerp(0.18f, MinOffTime, Mathf.Clamp01(demand));
         }
 
         private float EstimateCharacteristicRadius()
@@ -616,7 +616,7 @@ namespace AdaptivePulseRCS
                 GetInstanceID(),
                 window,
                 DrawWindow,
-                "Adaptive Pulse RCS - Beta 1.2"
+                "Adaptive Pulse RCS - Beta 1.3"
             );
         }
 
