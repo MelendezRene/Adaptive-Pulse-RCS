@@ -15,6 +15,7 @@ namespace AdaptivePulseRCS
         private const float InputDeadband = 0.025f;
         private const float AuthorityEpsilon = 0.0001f;
         private const float CouplingPenalty = 0.12f;
+        private const float CrossCouplingPenalty = 0.06f;
 
         private Vessel vessel;
         private bool enabledController = true;
@@ -98,7 +99,7 @@ namespace AdaptivePulseRCS
 
         public void Start()
         {
-            Debug.Log("[AdaptivePulseRCS] Beta 1.7 starting - RO-safe per-axis adaptive allocator");
+            Debug.Log("[AdaptivePulseRCS] Beta 2.0 starting - RO-safe authority allocator and per-axis pulse scheduler");
             LoadSettings();
 
             GameEvents.onVesselChange.Add(OnVesselChange);
@@ -126,8 +127,10 @@ namespace AdaptivePulseRCS
             RemoveToolbarButton();
 
             if (vessel != null)
+            {
                 vessel.OnPostAutopilotUpdate -= CaptureAutopilotControls;
                 vessel.OnFlyByWire -= ProcessControls;
+            }
 
             if (toolbarIcon != null)
                 Destroy(toolbarIcon);
@@ -189,8 +192,10 @@ namespace AdaptivePulseRCS
             RestoreAll();
 
             if (vessel != null)
+            {
                 vessel.OnPostAutopilotUpdate -= CaptureAutopilotControls;
                 vessel.OnFlyByWire -= ProcessControls;
+            }
 
             vessel = v;
 
@@ -473,8 +478,13 @@ namespace AdaptivePulseRCS
                         continue;
 
                     float coupling = OtherAxesMagnitude(authorityVector, axis);
+                    Vector3 crossVector = rotation ? thruster.ForceLocal : thruster.TorqueLocal;
+                    float crossCoupling = crossVector.magnitude;
 
-                    float score = primary / (primary + coupling * CouplingPenalty + AuthorityEpsilon);
+                    float score = primary / (primary +
+                                             coupling * CouplingPenalty +
+                                             crossCoupling * CrossCouplingPenalty +
+                                             AuthorityEpsilon);
                     if (score <= AuthorityEpsilon)
                         continue;
 
@@ -495,7 +505,12 @@ namespace AdaptivePulseRCS
                 Vector3 authorityVector = rotation ? thruster.TorqueLocal : thruster.ForceLocal;
                 float primary = Axis(authorityVector, axis) * sign;
                 float coupling = OtherAxesMagnitude(authorityVector, axis);
-                float score = primary / (primary + coupling * CouplingPenalty + AuthorityEpsilon);
+                Vector3 crossVector = rotation ? thruster.ForceLocal : thruster.TorqueLocal;
+                float crossCoupling = crossVector.magnitude;
+                float score = primary / (primary +
+                                         coupling * CouplingPenalty +
+                                         crossCoupling * CrossCouplingPenalty +
+                                         AuthorityEpsilon);
 
                 if (score < threshold)
                     continue;
@@ -541,14 +556,14 @@ namespace AdaptivePulseRCS
 
         private void ApplyModuleSelection()
         {
-            // Beta 1.7: do not write ModuleRCS.rcsEnabled or thrustPercentage here.
+            // Beta 2.0: never write ModuleRCS.rcsEnabled or thrustPercentage here.
             // Those are persistent/player-owned settings (and may also be managed by RO).
             // Selection is internal; pulse gating is applied to FlightCtrlState instead.
         }
 
         private void RestoreModuleStates()
         {
-            // Beta 1.7+: no automatic writes here. RCS enable/disable state belongs
+            // Beta 2.0: no automatic writes here. RCS enable/disable state belongs
             // to the player/RO and must not be overwritten every control frame.
         }
 
@@ -852,7 +867,7 @@ namespace AdaptivePulseRCS
             if (!HighLogic.LoadedSceneIsFlight || !showWindow)
                 return;
 
-            window = GUILayout.Window(GetInstanceID(), window, DrawWindow, "Adaptive Pulse RCS - Beta 1.7");
+            window = GUILayout.Window(GetInstanceID(), window, DrawWindow, "Adaptive Pulse RCS - Beta 2.0");
         }
 
         private void DrawWindow(int id)
@@ -872,8 +887,8 @@ namespace AdaptivePulseRCS
 
             GUILayout.Label("Vessel: " + (vessel != null ? vessel.vesselName : "NONE"));
             GUILayout.Label("RCS modules: " + modules.Count + " | Thrusters: " + thrusterCount);
-            GUILayout.Label("Allocator: " + selectedThrusterCandidates + " thruster candidates -> " +
-                            selectedModuleCount + " active modules");
+            GUILayout.Label("Authority allocator: " + selectedThrusterCandidates + " nozzle candidates -> " +
+                            selectedModuleCount + " candidate modules");
 
             GUILayout.Label("Torque P/R/Y: " + FormatVector(selectedTorqueAuthority));
             GUILayout.Label("Force X/Z/Y: " + FormatVector(selectedForceAuthority));
