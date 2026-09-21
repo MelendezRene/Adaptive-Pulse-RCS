@@ -9,7 +9,7 @@ namespace AdaptivePulseRCS
     {
         private const float MinPulse = 0.02f;
         private const float MaxPulse = 0.80f;
-        private const float MinOffTime = 0.04f;
+        private const float MinOffTime = 0.08f;
         private const float InputDeadband = 0.025f;
         private const float ContinuousDemand = 0.90f;
         private const float AuthorityEpsilon = 0.0001f;
@@ -20,6 +20,8 @@ namespace AdaptivePulseRCS
         private Rect window = new Rect(320, 120, 390, 300);
 
         private readonly List<ModuleModel> modules = new List<ModuleModel>();
+        private readonly List<WheelModel> reactionWheels = new List<WheelModel>();
+        private bool rcsPriorityMode = true;
 
         private Vector3 rotationDemand;     // x=pitch, y=roll, z=yaw
         private Vector3 translationDemand;  // x=X, y=Z, z=Y (KSP part-space convention)
@@ -49,6 +51,12 @@ namespace AdaptivePulseRCS
             public bool Selected;
         }
 
+        private sealed class WheelModel
+        {
+            public ModuleReactionWheel Module;
+            public ModuleReactionWheel.WheelState OriginalState;
+        }
+
         private sealed class ThrusterModel
         {
             public Transform Transform;
@@ -61,7 +69,7 @@ namespace AdaptivePulseRCS
 
         public void Start()
         {
-            Debug.Log("[AdaptivePulseRCS] Beta 1.1 starting - MechJeb compatibility gate active");
+            Debug.Log("[AdaptivePulseRCS] Beta 1.2 starting - post-autopilot command pulsing active");
             GameEvents.onVesselChange.Add(OnVesselChange);
             GameEvents.onVesselWasModified.Add(OnVesselModified);
             GameEvents.onVesselCreate.Add(OnVesselCreate);
@@ -77,7 +85,7 @@ namespace AdaptivePulseRCS
             GameEvents.onVesselCreate.Remove(OnVesselCreate);
 
             if (vessel != null)
-                vessel.OnFlyByWire -= ReadControls;
+                vessel.OnPostAutopilotUpdate -= ProcessControls;
         }
 
         private void OnVesselChange(Vessel v)
@@ -102,13 +110,13 @@ namespace AdaptivePulseRCS
             RestoreAll();
 
             if (vessel != null)
-                vessel.OnFlyByWire -= ReadControls;
+                vessel.OnPostAutopilotUpdate -= ProcessControls;
 
             vessel = v;
 
             if (vessel != null)
             {
-                vessel.OnFlyByWire += ReadControls;
+                vessel.OnPostAutopilotUpdate += ProcessControls;
                 ScanModules();
             }
         }
@@ -117,6 +125,7 @@ namespace AdaptivePulseRCS
         {
             RestoreAll();
             modules.Clear();
+            reactionWheels.Clear();
             thrusterCount = 0;
 
             if (vessel == null || vessel.parts == null || vessel.ReferenceTransform == null)
@@ -133,6 +142,15 @@ namespace AdaptivePulseRCS
 
                 foreach (PartModule pm in part.Modules)
                 {
+                    ModuleReactionWheel rw = pm as ModuleReactionWheel;
+                    if (rw != null)
+                    {
+                        WheelModel wheel = new WheelModel();
+                        wheel.Module = rw;
+                        wheel.OriginalState = rw.State;
+                        reactionWheels.Add(wheel);
+                    }
+
                     ModuleRCS rcs = pm as ModuleRCS;
                     if (rcs == null)
                         continue;
@@ -149,7 +167,7 @@ namespace AdaptivePulseRCS
                 }
             }
 
-            Debug.Log("[AdaptivePulseRCS] Scan complete modules=" + modules.Count + " thrusterTransforms=" + thrusterCount);
+            Debug.Log("[AdaptivePulseRCS] Scan complete modules=" + modules.Count + " thrusterTransforms=" + thrusterCount + " reactionWheels=" + reactionWheels.Count);
         }
 
         private void BuildThrusterModels(ModuleModel model, ModuleRCS rcs, Vector3d com)
@@ -237,30 +255,19 @@ namespace AdaptivePulseRCS
             );
         }
 
-        private void ReadControls(FlightCtrlState c)
+        private void ProcessControls(FlightCtrlState state)
         {
-            if (!enabledController)
+            if (!enabledController || vessel == null || !vessel.ActionGroups[KSPActionGroup.RCS])
             {
                 rotationDemand = Vector3.zero;
                 translationDemand = Vector3.zero;
-                return;
-            }
-
-            rotationDemand = new Vector3(c.pitch, c.roll, c.yaw);
-            translationDemand = new Vector3(c.X, c.Z, c.Y);
-        }
-
-        public void FixedUpdate()
-        {
-            if (!HighLogic.LoadedSceneIsFlight || vessel == null)
-                return;
-
-            if (!enabledController || !vessel.ActionGroups[KSPActionGroup.RCS])
-            {
-                SetAllGates(false);
+                RestoreReactionWheels();
                 ResetPulseState();
                 return;
             }
+
+            rotationDemand = new Vector3(state.pitch, state.roll, state.yaw);
+            translationDemand = new Vector3(state.X, state.Z, state.Y);
 
             float currentMass = SafeMass();
             if (Mathf.Abs(currentMass - lastScanMass) > Mathf.Max(0.10f, lastScanMass * 0.03f))
@@ -270,54 +277,87 @@ namespace AdaptivePulseRCS
 
             if (demand <= InputDeadband)
             {
-                SetAllGates(false);
+                selectedModuleCount = 0;
+                selectedForce = 0f;
+                selectedTorque = 0f;
+                RestoreReactionWheels();
                 ResetPulseState();
                 return;
             }
 
             SelectUsefulModules();
 
-            if (selectedModuleCount == 0)
-            {
-                SetAllGates(false);
-                ResetPulseState();
-                return;
-            }
+            bool hasUsefulRcs = selectedModuleCount > 0;
+            SetReactionWheelPriority(rcsPriorityMode && hasUsefulRcs);
 
-            if (demand >= ContinuousDemand)
+            if (!hasUsefulRcs)
             {
-                ApplySelectionGate(true);
-                pulseRemaining = 0f;
-                offRemaining = 0f;
-                nextPulse = 0f;
+                ResetPulseState();
                 return;
             }
 
             float dt = TimeWarp.fixedDeltaTime;
 
-            if (gateOn)
+            if (demand >= ContinuousDemand)
+            {
+                gateOn = true;
+                pulseRemaining = 0f;
+                offRemaining = 0f;
+                nextPulse = 0f;
+            }
+            else if (gateOn)
             {
                 pulseRemaining -= dt;
-
                 if (pulseRemaining <= 0f)
                 {
-                    ApplySelectionGate(false);
+                    gateOn = false;
                     offRemaining = MinOffTime;
                 }
-
-                return;
             }
-
-            if (offRemaining > 0f)
+            else if (offRemaining > 0f)
             {
                 offRemaining -= dt;
-                return;
+            }
+            else
+            {
+                nextPulse = CalculatePulseLength();
+                pulseRemaining = nextPulse;
+                gateOn = true;
+                Debug.Log("[AdaptivePulseRCS] Pulse=" + nextPulse.ToString("F3") +
+                          "s selectedModules=" + selectedModuleCount +
+                          " force=" + selectedForce.ToString("F3") +
+                          " torque=" + selectedTorque.ToString("F3"));
             }
 
-            nextPulse = CalculatePulseLength();
-            pulseRemaining = nextPulse;
-            Debug.Log("[AdaptivePulseRCS] Pulse=" + nextPulse.ToString("F3") + "s selectedModules=" + selectedModuleCount + " force=" + selectedForce.ToString("F3") + " torque=" + selectedTorque.ToString("F3"));
-            ApplySelectionGate(true);
+            if (!gateOn)
+            {
+                // This runs after MechJeb/SAS has produced the final command.
+                // Keep the RCS modules fully enabled/visible and pulse the command itself.
+                state.pitch = 0f;
+                state.yaw = 0f;
+                state.roll = 0f;
+                state.X = 0f;
+                state.Y = 0f;
+                state.Z = 0f;
+            }
+        }
+
+        private void SetReactionWheelPriority(bool suppress)
+        {
+            foreach (WheelModel wheel in reactionWheels)
+            {
+                if (wheel.Module == null)
+                    continue;
+
+                wheel.Module.State = suppress
+                    ? ModuleReactionWheel.WheelState.Disabled
+                    : wheel.OriginalState;
+            }
+        }
+
+        private void RestoreReactionWheels()
+        {
+            SetReactionWheelPriority(false);
         }
 
         private void RecalculateGeometryOnly()
@@ -518,49 +558,6 @@ namespace AdaptivePulseRCS
             }
         }
 
-        private void ApplySelectionGate(bool on)
-        {
-            gateOn = on;
-
-            foreach (ModuleModel model in modules)
-            {
-                if (model.Module == null)
-                    continue;
-
-                // Never toggle rcsEnabled here. MechJeb and other guidance systems
-                // may use that flag to determine whether RCS authority exists.
-                model.Module.rcsEnabled = model.OriginalEnabled;
-
-                bool shouldFire = on && model.Selected && model.OriginalEnabled;
-                model.Module.thrustPercentage = shouldFire
-                    ? model.OriginalThrustPercentage
-                    : 0f;
-            }
-        }
-
-        private void SetAllGates(bool on)
-        {
-            gateOn = on;
-
-            foreach (ModuleModel model in modules)
-            {
-                if (model.Module == null)
-                    continue;
-
-                model.Module.rcsEnabled = model.OriginalEnabled;
-                model.Module.thrustPercentage = on
-                    ? model.OriginalThrustPercentage
-                    : 0f;
-            }
-
-            if (!on)
-            {
-                selectedModuleCount = 0;
-                selectedForce = 0f;
-                selectedTorque = 0f;
-            }
-        }
-
         private void RestoreAll()
         {
             foreach (ModuleModel model in modules)
@@ -568,10 +565,12 @@ namespace AdaptivePulseRCS
                 if (model.Module == null)
                     continue;
 
+                // Adaptive Pulse RCS must never hide RCS authority from MechJeb.
                 model.Module.rcsEnabled = model.OriginalEnabled;
                 model.Module.thrustPercentage = model.OriginalThrustPercentage;
             }
 
+            RestoreReactionWheels();
             gateOn = false;
             selectedModuleCount = 0;
             selectedForce = 0f;
@@ -617,7 +616,7 @@ namespace AdaptivePulseRCS
                 GetInstanceID(),
                 window,
                 DrawWindow,
-                "Adaptive Pulse RCS - Beta 1.1"
+                "Adaptive Pulse RCS - Beta 1.2"
             );
         }
 
@@ -639,8 +638,10 @@ namespace AdaptivePulseRCS
                 ScanModules();
             }
 
+            rcsPriorityMode = GUILayout.Toggle(rcsPriorityMode, "RCS priority (suppress reaction wheels)");
             GUILayout.Label("RCS modules: " + modules.Count);
             GUILayout.Label("Thruster transforms: " + thrusterCount);
+            GUILayout.Label("Reaction wheels: " + reactionWheels.Count);
             GUILayout.Label("Selected modules: " + selectedModuleCount);
 
             GUILayout.Space(4);
