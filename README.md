@@ -2,7 +2,7 @@
 
 Universal automatic pulse controller for Kerbal Space Program 1.12.x.
 
-## Beta 1 — v0.3.0-b1
+## Beta 1.4 — v0.3.4-b1.4
 
 This is the first beta baseline for the project.
 
@@ -30,11 +30,11 @@ The player does **not** set pulse duration manually.
 - Recalculates RCS geometry when vessel mass changes significantly.
 - Re-scans after vessel modification, docking/staging-related vessel changes and manual refresh.
 
-## Important Beta 1 limitation
+## Important Beta 1.4 limitation
 
 KSP's stock `ModuleRCS` exposes the individual nozzle transforms for analysis, but does not provide a safe public interface for independently switching individual transforms inside the same module.
 
-Therefore Beta 1:
+Therefore Beta 1.4:
 
 1. models **each nozzle individually** for force/torque calculations;
 2. chooses useful RCS **modules** based on those calculations;
@@ -74,7 +74,9 @@ Adaptive Pulse RCS uses the RCS authority that actually exists on the vessel.
 ## Controls
 
 - Stock RCS action group: master hardware enable.
-- `Alt + P`: show/hide Adaptive Pulse RCS window.
+- `Ctrl + Shift + P`: default show/hide hotkey.
+- The hotkey can be changed in flight with **Change hotkey** and is saved for future sessions.
+- A stock KSP toolbar button can also show/hide the window.
 - **Automatic adaptive pulse control**: enables/disables the controller.
 - **Re-scan vessel**: manually rebuilds the RCS authority model.
 - **Restore stock RCS**: disables Adaptive Pulse RCS and restores the module enable states.
@@ -104,7 +106,7 @@ Expected output:
 
 `GameData/AdaptivePulseRCS/Plugins/AdaptivePulseRCS.dll`
 
-## Beta test priorities
+## Beta 1.4 test priorities
 
 For Beta 1, testing should focus on:
 
