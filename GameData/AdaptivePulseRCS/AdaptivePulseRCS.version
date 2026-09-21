@@ -1,6 +1,6 @@
 {
   "NAME": "Adaptive Pulse RCS",
-  "VERSION": { "MAJOR": 0, "MINOR": 3, "PATCH": 0, "BUILD": 1 },
+  "VERSION": { "MAJOR": 0, "MINOR": 3, "PATCH": 2, "BUILD": 1 },
   "KSP_VERSION_MIN": { "MAJOR": 1, "MINOR": 12, "PATCH": 0 },
   "KSP_VERSION_MAX": { "MAJOR": 1, "MINOR": 12, "PATCH": 99 }
 }
