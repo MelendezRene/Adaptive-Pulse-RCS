@@ -1,5 +1,36 @@
 # Changelog
 
+## v0.4.0-b2.0 — Beta 2.0
+
+### Architecture
+
+- Reframes the allocator as an RCS authority/coupling analyzer plus per-axis pulse scheduler.
+- The plugin no longer uses `ModuleRCS.rcsEnabled` or `thrustPercentage` as part of automatic allocation.
+- Stock/RO `ModuleRCS` remains responsible for the physical firing path, resource consumption and effects.
+
+### Added / improved
+
+- Cross-coupling scoring now considers both unwanted motion on the same domain and cross-domain effects:
+  - rotation requests penalize unwanted torque and residual force;
+  - translation requests penalize unwanted force and residual torque.
+- Independent pulse scheduling remains active for pitch, roll, yaw and X/Z/Y translation.
+- Precision / docking mode remains available.
+- UI terminology now distinguishes nozzle candidates and candidate modules from actually fired thrusters.
+- Manual **Enable all RCS modules** recovery remains available for craft affected by older betas.
+
+### Fixed
+
+- Corrected missing braces around vessel event unsubscription in `Attach()` and `OnDestroy()`.
+- Prevented automatic allocator logic from changing player/RO-owned RCS enabled states.
+
+### Compatibility target
+
+- KSP 1.12.x
+- Realism Overhaul / RealFuels
+- ModuleRCS / ModuleRCSFX
+- Stock SAS
+- MechJeb2 and other systems using normal FlightCtrlState
+
 ## v0.3.5-b1.5 — Beta 1.5
 
 ### Added
