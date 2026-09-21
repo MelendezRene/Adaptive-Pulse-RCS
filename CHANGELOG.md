@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.3.5-b1.5 — Beta 1.5
+
+### Added
+
+- Per-axis pulse channels for pitch, roll, yaw, X, Z and Y translation.
+- Per-thruster scoring inside the plugin to identify the best RCS nozzles for each requested axis.
+- Coupling penalty so the allocator prefers thrusters that create the requested force/torque while minimizing unwanted motion on other axes.
+- Improved per-axis inertia estimate based on vessel part masses and their position relative to the current center of mass.
+- Precision / docking mode with shorter maximum pulses and longer settling time.
+- New allocator telemetry showing thruster candidates, selected modules, per-axis force/torque authority and inertia estimates.
+- Automatic geometry/inertia recalculation after smaller mass changes.
+
+### Changed
+
+- Module selection is now driven by per-thruster analysis rather than simple aggregate module authority.
+- Pulse length is calculated independently for every rotational and translational axis.
+- RCS still fires through stock ModuleRCS/ModuleRCSFX so RO/RealFuels resource consumption and effects remain under the normal KSP RCS system.
+
+### Experimental design note
+
+Beta 1.5 introduces an individual-thruster allocator for analysis and selection, but does not directly bypass ModuleRCS to apply custom forces. This is intentional: direct per-transform force injection would risk bypassing RealFuels resource consumption and RCS effects. The plugin therefore selects the best containing RCS modules while preserving the normal KSP/RO firing path.
+
+### Compatibility
+
+- KSP 1.12.x
+- Realism Overhaul / RealFuels
+- ModuleRCS / ModuleRCSFX
+- Stock SAS
+- MechJeb2 and other systems that command normal FlightCtrlState
+
 ## v0.3.4-b1.4 — Beta 1.4
 
 ### Added
