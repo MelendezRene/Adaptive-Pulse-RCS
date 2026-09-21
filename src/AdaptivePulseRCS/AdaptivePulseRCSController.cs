@@ -96,7 +96,7 @@ namespace AdaptivePulseRCS
 
         public void Start()
         {
-            Debug.Log("[AdaptivePulseRCS] Beta 1.6 starting - RO-safe per-axis adaptive allocator");
+            Debug.Log("[AdaptivePulseRCS] Beta 1.7 starting - RO-safe per-axis adaptive allocator");
             LoadSettings();
 
             GameEvents.onVesselChange.Add(OnVesselChange);
@@ -449,8 +449,6 @@ namespace AdaptivePulseRCS
                         continue;
 
                     float coupling = OtherAxesMagnitude(authorityVector, axis);
-                    Vector3 crossVector = rotation ? thruster.ForceLocal : thruster.TorqueLocal;
-                    coupling += 0.5f * crossVector.magnitude;
 
                     float score = primary / (primary + coupling * CouplingPenalty + AuthorityEpsilon);
                     if (score <= AuthorityEpsilon)
@@ -473,8 +471,6 @@ namespace AdaptivePulseRCS
                 Vector3 authorityVector = rotation ? thruster.TorqueLocal : thruster.ForceLocal;
                 float primary = Axis(authorityVector, axis) * sign;
                 float coupling = OtherAxesMagnitude(authorityVector, axis);
-                Vector3 crossVector = rotation ? thruster.ForceLocal : thruster.TorqueLocal;
-                coupling += 0.5f * crossVector.magnitude;
                 float score = primary / (primary + coupling * CouplingPenalty + AuthorityEpsilon);
 
                 if (score < threshold)
@@ -825,7 +821,7 @@ namespace AdaptivePulseRCS
             if (!HighLogic.LoadedSceneIsFlight || !showWindow)
                 return;
 
-            window = GUILayout.Window(GetInstanceID(), window, DrawWindow, "Adaptive Pulse RCS - Beta 1.6");
+            window = GUILayout.Window(GetInstanceID(), window, DrawWindow, "Adaptive Pulse RCS - Beta 1.7");
         }
 
         private void DrawWindow(int id)
