@@ -14,28 +14,34 @@ namespace AdaptivePulseRCS
         private const float MinOffTime = 0.10f;
         private const float InputDeadband = 0.025f;
         private const float AuthorityEpsilon = 0.0001f;
+        private const float CouplingPenalty = 0.35f;
 
         private Vessel vessel;
         private bool enabledController = true;
         private bool showWindow = true;
-        private Rect window = new Rect(320, 120, 420, 390);
+        private Rect window = new Rect(320, 120, 450, 500);
 
         private readonly List<ModuleModel> modules = new List<ModuleModel>();
         private readonly List<WheelModel> reactionWheels = new List<WheelModel>();
         private bool rcsPriorityMode = true;
+        private bool precisionMode = false;
 
         private Vector3 rotationDemand;
         private Vector3 translationDemand;
 
-        private readonly PulseChannel rotationPulse = new PulseChannel();
-        private readonly PulseChannel translationPulse = new PulseChannel();
+        private readonly PulseChannel pitchPulse = new PulseChannel();
+        private readonly PulseChannel rollPulse = new PulseChannel();
+        private readonly PulseChannel yawPulse = new PulseChannel();
+        private readonly PulseChannel xPulse = new PulseChannel();
+        private readonly PulseChannel zPulse = new PulseChannel();
+        private readonly PulseChannel yPulse = new PulseChannel();
 
         private int selectedModuleCount;
-        private int selectedRotationModules;
-        private int selectedTranslationModules;
+        private int selectedThrusterCandidates;
         private int thrusterCount;
-        private float selectedForce;
-        private float selectedTorque;
+        private Vector3 selectedTorqueAuthority;
+        private Vector3 selectedForceAuthority;
+        private Vector3 inertiaEstimate = Vector3.one;
         private float lastScanMass;
 
         private ApplicationLauncherButton toolbarButton;
@@ -70,14 +76,6 @@ namespace AdaptivePulseRCS
             public bool OriginalEnabled;
             public float OriginalThrustPercentage;
             public readonly List<ThrusterModel> Thrusters = new List<ThrusterModel>();
-
-            public Vector3 PositiveTorque;
-            public Vector3 NegativeTorque;
-            public Vector3 PositiveForce;
-            public Vector3 NegativeForce;
-
-            public bool RotationSelected;
-            public bool TranslationSelected;
             public bool Selected;
         }
 
@@ -90,8 +88,7 @@ namespace AdaptivePulseRCS
         private sealed class ThrusterModel
         {
             public Transform Transform;
-            public Vector3 ForceWorld;
-            public Vector3 TorqueWorld;
+            public ModuleModel Parent;
             public Vector3 ForceLocal;
             public Vector3 TorqueLocal;
             public float ForceMagnitude;
@@ -99,7 +96,7 @@ namespace AdaptivePulseRCS
 
         public void Start()
         {
-            Debug.Log("[AdaptivePulseRCS] Beta 1.4 starting");
+            Debug.Log("[AdaptivePulseRCS] Beta 1.5 starting - per-axis adaptive allocator");
             LoadSettings();
 
             GameEvents.onVesselChange.Add(OnVesselChange);
@@ -142,10 +139,7 @@ namespace AdaptivePulseRCS
             toolbarButton = ApplicationLauncher.Instance.AddModApplication(
                 () => showWindow = true,
                 () => showWindow = false,
-                null,
-                null,
-                null,
-                null,
+                null, null, null, null,
                 ApplicationLauncher.AppScenes.FLIGHT,
                 toolbarIcon
             );
@@ -166,7 +160,6 @@ namespace AdaptivePulseRCS
         {
             Texture2D tex = new Texture2D(38, 38, TextureFormat.ARGB32, false);
             Color clear = new Color(0f, 0f, 0f, 0f);
-            Color white = Color.white;
 
             for (int y = 0; y < 38; y++)
                 for (int x = 0; x < 38; x++)
@@ -174,32 +167,19 @@ namespace AdaptivePulseRCS
 
             for (int y = 16; y <= 21; y++)
                 for (int x = 6; x <= 31; x++)
-                    tex.SetPixel(x, y, white);
+                    tex.SetPixel(x, y, Color.white);
 
             for (int x = 16; x <= 21; x++)
                 for (int y = 6; y <= 31; y++)
-                    tex.SetPixel(x, y, white);
+                    tex.SetPixel(x, y, Color.white);
 
             tex.Apply(false, false);
             return tex;
         }
 
-        private void OnVesselChange(Vessel v)
-        {
-            Attach(v);
-        }
-
-        private void OnVesselCreate(Vessel v)
-        {
-            if (v == vessel)
-                ScanModules();
-        }
-
-        private void OnVesselModified(Vessel v)
-        {
-            if (v == vessel)
-                ScanModules();
-        }
+        private void OnVesselChange(Vessel v) { Attach(v); }
+        private void OnVesselCreate(Vessel v) { if (v == vessel) ScanModules(); }
+        private void OnVesselModified(Vessel v) { if (v == vessel) ScanModules(); }
 
         private void Attach(Vessel v)
         {
@@ -245,11 +225,7 @@ namespace AdaptivePulseRCS
                     ModuleReactionWheel rw = pm as ModuleReactionWheel;
                     if (rw != null)
                     {
-                        reactionWheels.Add(new WheelModel
-                        {
-                            Module = rw,
-                            OriginalState = rw.State
-                        });
+                        reactionWheels.Add(new WheelModel { Module = rw, OriginalState = rw.State });
                     }
 
                     ModuleRCS rcs = pm as ModuleRCS;
@@ -264,16 +240,17 @@ namespace AdaptivePulseRCS
                     };
 
                     BuildThrusterModels(model, rcs, com);
-                    AccumulateAuthority(model, rcs);
                     modules.Add(model);
                 }
             }
+
+            inertiaEstimate = EstimateInertiaTensor();
 
             Debug.Log("[AdaptivePulseRCS] Scan complete vessel=" + vessel.vesselName +
                       " mass=" + lastScanMass.ToString("F3") +
                       "t modules=" + modules.Count +
                       " thrusters=" + thrusterCount +
-                      " wheels=" + reactionWheels.Count);
+                      " inertia=" + FormatVector(inertiaEstimate));
         }
 
         private void BuildThrusterModels(ModuleModel model, ModuleRCS rcs, Vector3d com)
@@ -282,11 +259,7 @@ namespace AdaptivePulseRCS
                 return;
 
             float powerFactor = Mathf.Max(0f, rcs.thrusterPower);
-
-            try
-            {
-                powerFactor *= Mathf.Clamp01(model.OriginalThrustPercentage * 0.01f);
-            }
+            try { powerFactor *= Mathf.Clamp01(model.OriginalThrustPercentage * 0.01f); }
             catch { }
 
             foreach (Transform t in rcs.thrusterTransforms)
@@ -300,58 +273,21 @@ namespace AdaptivePulseRCS
 
                 direction.Normalize();
 
-                Vector3 force = direction * powerFactor;
+                Vector3 forceWorld = direction * powerFactor;
                 Vector3 arm = t.position - (Vector3)com;
-                Vector3 torque = Vector3.Cross(arm, force);
+                Vector3 torqueWorld = Vector3.Cross(arm, forceWorld);
 
                 model.Thrusters.Add(new ThrusterModel
                 {
                     Transform = t,
-                    ForceWorld = force,
-                    TorqueWorld = torque,
-                    ForceLocal = vessel.ReferenceTransform.InverseTransformDirection(force),
-                    TorqueLocal = vessel.ReferenceTransform.InverseTransformDirection(torque),
+                    Parent = model,
+                    ForceLocal = vessel.ReferenceTransform.InverseTransformDirection(forceWorld),
+                    TorqueLocal = vessel.ReferenceTransform.InverseTransformDirection(torqueWorld),
                     ForceMagnitude = powerFactor
                 });
 
                 thrusterCount++;
             }
-        }
-
-        private void AccumulateAuthority(ModuleModel model, ModuleRCS rcs)
-        {
-            Vector3 rotateEnable = new Vector3(
-                rcs.enablePitch ? 1f : 0f,
-                rcs.enableRoll ? 1f : 0f,
-                rcs.enableYaw ? 1f : 0f
-            );
-
-            Vector3 translateEnable = new Vector3(
-                rcs.enableX ? 1f : 0f,
-                rcs.enableZ ? 1f : 0f,
-                rcs.enableY ? 1f : 0f
-            );
-
-            foreach (ThrusterModel t in model.Thrusters)
-            {
-                Vector3 torque = Vector3.Scale(t.TorqueLocal, rotateEnable);
-                Vector3 force = Vector3.Scale(t.ForceLocal, translateEnable);
-
-                model.PositiveTorque += Positive(torque);
-                model.NegativeTorque += Negative(torque);
-                model.PositiveForce += Positive(force);
-                model.NegativeForce += Negative(force);
-            }
-        }
-
-        private static Vector3 Positive(Vector3 v)
-        {
-            return new Vector3(Mathf.Max(0f, v.x), Mathf.Max(0f, v.y), Mathf.Max(0f, v.z));
-        }
-
-        private static Vector3 Negative(Vector3 v)
-        {
-            return new Vector3(Mathf.Min(0f, v.x), Mathf.Min(0f, v.y), Mathf.Min(0f, v.z));
         }
 
         private void ProcessControls(FlightCtrlState state)
@@ -370,21 +306,18 @@ namespace AdaptivePulseRCS
             translationDemand = new Vector3(state.X, state.Z, state.Y);
 
             float currentMass = SafeMass();
-            if (Mathf.Abs(currentMass - lastScanMass) > Mathf.Max(0.10f, lastScanMass * 0.03f))
+            if (Mathf.Abs(currentMass - lastScanMass) > Mathf.Max(0.10f, lastScanMass * 0.02f))
                 RecalculateGeometryOnly();
 
-            float rotationMagnitude = MaxAbs(rotationDemand);
-            float translationMagnitude = MaxAbs(translationDemand);
-            bool wantsRotation = rotationMagnitude > InputDeadband;
-            bool wantsTranslation = translationMagnitude > InputDeadband;
+            bool wantsRotation = MaxAbs(rotationDemand) > InputDeadband;
+            bool wantsTranslation = MaxAbs(translationDemand) > InputDeadband;
 
             if (!wantsRotation && !wantsTranslation)
             {
                 selectedModuleCount = 0;
-                selectedRotationModules = 0;
-                selectedTranslationModules = 0;
-                selectedForce = 0f;
-                selectedTorque = 0f;
+                selectedThrusterCandidates = 0;
+                selectedTorqueAuthority = Vector3.zero;
+                selectedForceAuthority = Vector3.zero;
                 RestoreModuleStates();
                 RestoreReactionWheels();
                 ResetPulseState();
@@ -393,45 +326,46 @@ namespace AdaptivePulseRCS
 
             SelectUsefulModules();
             ApplyModuleSelection();
+            SetReactionWheelPriority(rcsPriorityMode && wantsRotation && selectedModuleCount > 0);
 
-            bool hasUsefulRcs = selectedModuleCount > 0;
-            SetReactionWheelPriority(rcsPriorityMode && wantsRotation && selectedRotationModules > 0);
-
-            if (!hasUsefulRcs)
+            if (selectedModuleCount == 0)
             {
                 ResetPulseState();
                 return;
             }
 
-            float dt = TimeWarp.fixedDeltaTime;
+            UpdateAxisChannel(pitchPulse, rotationDemand.x, Axis(selectedTorqueAuthority, 0), Axis(inertiaEstimate, 0), true);
+            UpdateAxisChannel(rollPulse, rotationDemand.y, Axis(selectedTorqueAuthority, 1), Axis(inertiaEstimate, 1), true);
+            UpdateAxisChannel(yawPulse, rotationDemand.z, Axis(selectedTorqueAuthority, 2), Axis(inertiaEstimate, 2), true);
 
-            UpdatePulseChannel(
-                rotationPulse,
-                wantsRotation && selectedRotationModules > 0,
-                rotationMagnitude,
-                CalculateRotationPulseLength()
-            );
+            float mass = SafeMass();
+            UpdateAxisChannel(xPulse, translationDemand.x, Axis(selectedForceAuthority, 0), mass, false);
+            UpdateAxisChannel(zPulse, translationDemand.y, Axis(selectedForceAuthority, 1), mass, false);
+            UpdateAxisChannel(yPulse, translationDemand.z, Axis(selectedForceAuthority, 2), mass, false);
 
-            UpdatePulseChannel(
-                translationPulse,
-                wantsTranslation && selectedTranslationModules > 0,
-                translationMagnitude,
-                CalculateTranslationPulseLength()
-            );
+            if (Mathf.Abs(rotationDemand.x) > InputDeadband && !pitchPulse.GateOn) state.pitch = 0f;
+            if (Mathf.Abs(rotationDemand.y) > InputDeadband && !rollPulse.GateOn) state.roll = 0f;
+            if (Mathf.Abs(rotationDemand.z) > InputDeadband && !yawPulse.GateOn) state.yaw = 0f;
 
-            if (wantsRotation && !rotationPulse.GateOn)
+            if (Mathf.Abs(translationDemand.x) > InputDeadband && !xPulse.GateOn) state.X = 0f;
+            if (Mathf.Abs(translationDemand.y) > InputDeadband && !zPulse.GateOn) state.Z = 0f;
+            if (Mathf.Abs(translationDemand.z) > InputDeadband && !yPulse.GateOn) state.Y = 0f;
+        }
+
+        private void UpdateAxisChannel(PulseChannel channel, float demand, float authority, float inertiaOrMass, bool rotation)
+        {
+            bool active = Mathf.Abs(demand) > InputDeadband && authority > AuthorityEpsilon;
+            if (!active)
             {
-                state.pitch = 0f;
-                state.roll = 0f;
-                state.yaw = 0f;
+                channel.Reset();
+                return;
             }
 
-            if (wantsTranslation && !translationPulse.GateOn)
-            {
-                state.X = 0f;
-                state.Y = 0f;
-                state.Z = 0f;
-            }
+            float requested = rotation
+                ? CalculateRotationPulseLength(Mathf.Abs(demand), authority, inertiaOrMass)
+                : CalculateTranslationPulseLength(Mathf.Abs(demand), authority, inertiaOrMass);
+
+            UpdatePulseChannel(channel, true, Mathf.Abs(demand), requested);
         }
 
         private void UpdatePulseChannel(PulseChannel channel, bool active, float demand, float requestedPulse)
@@ -466,89 +400,123 @@ namespace AdaptivePulseRCS
             channel.GateOn = true;
         }
 
-        private void SetReactionWheelPriority(bool suppress)
-        {
-            foreach (WheelModel wheel in reactionWheels)
-            {
-                if (wheel.Module == null)
-                    continue;
-
-                wheel.Module.State = suppress
-                    ? ModuleReactionWheel.WheelState.Disabled
-                    : wheel.OriginalState;
-            }
-        }
-
-        private void RestoreReactionWheels()
-        {
-            SetReactionWheelPriority(false);
-        }
-
-        private void RecalculateGeometryOnly()
-        {
-            if (vessel == null || vessel.ReferenceTransform == null)
-                return;
-
-            Vector3 com = vessel.CoM;
-            lastScanMass = SafeMass();
-            thrusterCount = 0;
-
-            foreach (ModuleModel model in modules)
-            {
-                model.Thrusters.Clear();
-                model.PositiveTorque = Vector3.zero;
-                model.NegativeTorque = Vector3.zero;
-                model.PositiveForce = Vector3.zero;
-                model.NegativeForce = Vector3.zero;
-
-                if (model.Module == null)
-                    continue;
-
-                BuildThrusterModels(model, model.Module, com);
-                AccumulateAuthority(model, model.Module);
-            }
-
-            Debug.Log("[AdaptivePulseRCS] Geometry recalculated mass=" + lastScanMass.ToString("F3") + "t");
-        }
-
         private void SelectUsefulModules()
         {
             selectedModuleCount = 0;
-            selectedRotationModules = 0;
-            selectedTranslationModules = 0;
-            selectedForce = 0f;
-            selectedTorque = 0f;
+            selectedThrusterCandidates = 0;
+            selectedTorqueAuthority = Vector3.zero;
+            selectedForceAuthority = Vector3.zero;
+
+            foreach (ModuleModel model in modules)
+                model.Selected = false;
+
+            SelectForDemand(rotationDemand.x, true, 0);
+            SelectForDemand(rotationDemand.y, true, 1);
+            SelectForDemand(rotationDemand.z, true, 2);
+            SelectForDemand(translationDemand.x, false, 0);
+            SelectForDemand(translationDemand.y, false, 1);
+            SelectForDemand(translationDemand.z, false, 2);
 
             foreach (ModuleModel model in modules)
             {
-                model.RotationSelected = false;
-                model.TranslationSelected = false;
-                model.Selected = false;
+                if (model.Selected)
+                    selectedModuleCount++;
+            }
+        }
 
+        private void SelectForDemand(float demand, bool rotation, int axis)
+        {
+            if (Mathf.Abs(demand) <= InputDeadband)
+                return;
+
+            float sign = Mathf.Sign(demand);
+            float bestScore = 0f;
+            List<ThrusterModel> winners = new List<ThrusterModel>();
+
+            foreach (ModuleModel model in modules)
+            {
                 if (model.Module == null || !model.OriginalEnabled)
                     continue;
 
-                model.RotationSelected = AxisMatches(rotationDemand, model.PositiveTorque, model.NegativeTorque);
-                model.TranslationSelected = AxisMatches(translationDemand, model.PositiveForce, model.NegativeForce);
-                model.Selected = model.RotationSelected || model.TranslationSelected;
-
-                if (!model.Selected)
+                if (!AxisEnabled(model.Module, rotation, axis))
                     continue;
 
-                selectedModuleCount++;
-
-                if (model.RotationSelected)
+                foreach (ThrusterModel thruster in model.Thrusters)
                 {
-                    selectedRotationModules++;
-                    selectedTorque += RequestedAuthority(rotationDemand, model.PositiveTorque, model.NegativeTorque);
-                }
+                    Vector3 authorityVector = rotation ? thruster.TorqueLocal : thruster.ForceLocal;
+                    float primary = Axis(authorityVector, axis) * sign;
+                    if (primary <= AuthorityEpsilon)
+                        continue;
 
-                if (model.TranslationSelected)
-                {
-                    selectedTranslationModules++;
-                    selectedForce += RequestedAuthority(translationDemand, model.PositiveForce, model.NegativeForce);
+                    float coupling = OtherAxesMagnitude(authorityVector, axis);
+                    Vector3 crossVector = rotation ? thruster.ForceLocal : thruster.TorqueLocal;
+                    coupling += 0.5f * crossVector.magnitude;
+
+                    float score = primary - (coupling * CouplingPenalty);
+                    if (score <= AuthorityEpsilon)
+                        continue;
+
+                    if (score > bestScore)
+                        bestScore = score;
+
+                    winners.Add(thruster);
                 }
             }
+
+            if (winners.Count == 0)
+                return;
+
+            float threshold = bestScore * (precisionMode ? 0.75f : 0.45f);
+
+            foreach (ThrusterModel thruster in winners)
+            {
+                Vector3 authorityVector = rotation ? thruster.TorqueLocal : thruster.ForceLocal;
+                float primary = Axis(authorityVector, axis) * sign;
+                float coupling = OtherAxesMagnitude(authorityVector, axis);
+                Vector3 crossVector = rotation ? thruster.ForceLocal : thruster.TorqueLocal;
+                coupling += 0.5f * crossVector.magnitude;
+                float score = primary - (coupling * CouplingPenalty);
+
+                if (score < threshold)
+                    continue;
+
+                thruster.Parent.Selected = true;
+                selectedThrusterCandidates++;
+
+                if (rotation)
+                    AddAxisAbs(ref selectedTorqueAuthority, axis, primary);
+                else
+                    AddAxisAbs(ref selectedForceAuthority, axis, primary);
+            }
+        }
+
+        private static bool AxisEnabled(ModuleRCS rcs, bool rotation, int axis)
+        {
+            if (rotation)
+            {
+                if (axis == 0) return rcs.enablePitch;
+                if (axis == 1) return rcs.enableRoll;
+                return rcs.enableYaw;
+            }
+
+            if (axis == 0) return rcs.enableX;
+            if (axis == 1) return rcs.enableZ;
+            return rcs.enableY;
+        }
+
+        private static float OtherAxesMagnitude(Vector3 v, int axis)
+        {
+            if (axis == 0) return Mathf.Abs(v.y) + Mathf.Abs(v.z);
+            if (axis == 1) return Mathf.Abs(v.x) + Mathf.Abs(v.z);
+            return Mathf.Abs(v.x) + Mathf.Abs(v.y);
+        }
+
+        private static void AddAxisAbs(ref Vector3 v, int axis, float amount)
+        {
+            amount = Mathf.Abs(amount);
+            if (axis == 0) v.x += amount;
+            else if (axis == 1) v.y += amount;
+            else v.z += amount;
         }
 
         private void ApplyModuleSelection()
@@ -575,127 +543,104 @@ namespace AdaptivePulseRCS
             }
         }
 
-        private static bool AxisMatches(Vector3 demand, Vector3 pos, Vector3 neg)
+        private void SetReactionWheelPriority(bool suppress)
         {
-            if (Mathf.Abs(demand.x) > InputDeadband &&
-                ((demand.x > 0f && pos.x > AuthorityEpsilon) ||
-                 (demand.x < 0f && neg.x < -AuthorityEpsilon)))
-                return true;
-
-            if (Mathf.Abs(demand.y) > InputDeadband &&
-                ((demand.y > 0f && pos.y > AuthorityEpsilon) ||
-                 (demand.y < 0f && neg.y < -AuthorityEpsilon)))
-                return true;
-
-            if (Mathf.Abs(demand.z) > InputDeadband &&
-                ((demand.z > 0f && pos.z > AuthorityEpsilon) ||
-                 (demand.z < 0f && neg.z < -AuthorityEpsilon)))
-                return true;
-
-            return false;
-        }
-
-        private static float RequestedAuthority(Vector3 demand, Vector3 pos, Vector3 neg)
-        {
-            return AxisAuthority(demand.x, pos.x, neg.x) +
-                   AxisAuthority(demand.y, pos.y, neg.y) +
-                   AxisAuthority(demand.z, pos.z, neg.z);
-        }
-
-        private static float AxisAuthority(float demand, float positive, float negative)
-        {
-            if (Mathf.Abs(demand) <= InputDeadband)
-                return 0f;
-
-            return demand > 0f
-                ? Mathf.Abs(positive) * Mathf.Abs(demand)
-                : Mathf.Abs(negative) * Mathf.Abs(demand);
-        }
-
-        private float CalculateTranslationPulseLength()
-        {
-            float magnitude = MaxAbs(translationDemand);
-            if (magnitude <= InputDeadband || selectedForce <= AuthorityEpsilon)
-                return MinPulse;
-
-            float mass = SafeMass();
-            float acceleration = selectedForce / Mathf.Max(0.01f, mass);
-            float desiredDeltaV = Mathf.Lerp(0.0010f, 0.050f, magnitude);
-            float requested = desiredDeltaV / Mathf.Max(0.0001f, acceleration);
-            requested *= Mathf.Lerp(0.35f, 1.0f, magnitude);
-
-            return Mathf.Clamp(requested, MinPulse, MaxPulse);
-        }
-
-        private float CalculateRotationPulseLength()
-        {
-            float magnitude = MaxAbs(rotationDemand);
-            if (magnitude <= InputDeadband || selectedTorque <= AuthorityEpsilon)
-                return MinPulse;
-
-            float mass = SafeMass();
-            float radius = EstimateCharacteristicRadius();
-            float inertiaEstimate = Mathf.Max(0.01f, mass * radius * radius);
-            float angularAcceleration = selectedTorque / inertiaEstimate;
-
-            float currentRate = 0f;
-            try
+            foreach (WheelModel wheel in reactionWheels)
             {
-                currentRate = (float)vessel.angularVelocity.magnitude;
+                if (wheel.Module == null)
+                    continue;
+
+                wheel.Module.State = suppress
+                    ? ModuleReactionWheel.WheelState.Disabled
+                    : wheel.OriginalState;
             }
-            catch { }
-
-            float desiredRateChange = Mathf.Lerp(0.0008f, 0.040f, magnitude);
-            if (currentRate > desiredRateChange)
-                desiredRateChange *= 0.30f;
-
-            float requested = desiredRateChange / Mathf.Max(0.0001f, angularAcceleration);
-            requested *= Mathf.Lerp(0.35f, 1.0f, magnitude);
-
-            return Mathf.Clamp(requested, MinPulse, MaxPulse);
         }
 
-        private float CalculateOffTime(float demand)
-        {
-            return Mathf.Lerp(0.20f, MinOffTime, Mathf.Clamp01(demand));
-        }
+        private void RestoreReactionWheels() { SetReactionWheelPriority(false); }
 
-        private float EstimateCharacteristicRadius()
+        private void RecalculateGeometryOnly()
         {
-            if (vessel == null || vessel.parts == null || vessel.parts.Count == 0)
-                return 1f;
+            if (vessel == null || vessel.ReferenceTransform == null)
+                return;
 
             Vector3 com = vessel.CoM;
-            double weightedDistance = 0.0;
-            double totalMass = 0.0;
+            lastScanMass = SafeMass();
+            thrusterCount = 0;
+
+            foreach (ModuleModel model in modules)
+            {
+                model.Thrusters.Clear();
+                if (model.Module != null)
+                    BuildThrusterModels(model, model.Module, com);
+            }
+
+            inertiaEstimate = EstimateInertiaTensor();
+            Debug.Log("[AdaptivePulseRCS] Geometry recalculated mass=" + lastScanMass.ToString("F3") +
+                      " inertia=" + FormatVector(inertiaEstimate));
+        }
+
+        private Vector3 EstimateInertiaTensor()
+        {
+            if (vessel == null || vessel.parts == null || vessel.ReferenceTransform == null)
+                return Vector3.one;
+
+            Vector3 com = vessel.CoM;
+            double ix = 0.0, iy = 0.0, iz = 0.0;
 
             foreach (Part p in vessel.parts)
             {
                 if (p == null)
                     continue;
 
-                double partMass = Math.Max(0.001, p.mass);
-                double distance = (p.transform.position - (Vector3)com).magnitude;
-                weightedDistance += distance * partMass;
-                totalMass += partMass;
+                double m = Math.Max(0.001, p.mass);
+                Vector3 armWorld = p.transform.position - com;
+                Vector3 r = vessel.ReferenceTransform.InverseTransformDirection(armWorld);
+
+                ix += m * (r.y * r.y + r.z * r.z);
+                iy += m * (r.x * r.x + r.z * r.z);
+                iz += m * (r.x * r.x + r.y * r.y);
             }
 
-            if (totalMass <= 0.0)
-                return 1f;
+            return new Vector3(
+                Mathf.Max(0.01f, (float)ix),
+                Mathf.Max(0.01f, (float)iy),
+                Mathf.Max(0.01f, (float)iz)
+            );
+        }
 
-            return Mathf.Max(0.5f, (float)(weightedDistance / totalMass));
+        private float CalculateTranslationPulseLength(float demand, float authority, float mass)
+        {
+            float acceleration = authority / Mathf.Max(0.01f, mass);
+            float maxDv = precisionMode ? 0.012f : 0.050f;
+            float minDv = precisionMode ? 0.0005f : 0.0010f;
+            float desiredDeltaV = Mathf.Lerp(minDv, maxDv, demand);
+            float requested = desiredDeltaV / Mathf.Max(0.0001f, acceleration);
+            requested *= Mathf.Lerp(0.35f, 1.0f, demand);
+            return Mathf.Clamp(requested, MinPulse, precisionMode ? 0.18f : MaxPulse);
+        }
+
+        private float CalculateRotationPulseLength(float demand, float authority, float inertia)
+        {
+            float angularAcceleration = authority / Mathf.Max(0.01f, inertia);
+            float minRate = precisionMode ? 0.0004f : 0.0008f;
+            float maxRate = precisionMode ? 0.012f : 0.040f;
+            float desiredRateChange = Mathf.Lerp(minRate, maxRate, demand);
+            float requested = desiredRateChange / Mathf.Max(0.0001f, angularAcceleration);
+            requested *= Mathf.Lerp(0.35f, 1.0f, demand);
+            return Mathf.Clamp(requested, MinPulse, precisionMode ? 0.18f : MaxPulse);
+        }
+
+        private float CalculateOffTime(float demand)
+        {
+            float baseOff = precisionMode ? 0.32f : 0.20f;
+            float minimum = precisionMode ? 0.16f : MinOffTime;
+            return Mathf.Lerp(baseOff, minimum, Mathf.Clamp01(demand));
         }
 
         private float SafeMass()
         {
-            try
-            {
-                return vessel == null ? 1f : Mathf.Max(0.01f, (float)vessel.GetTotalMass());
-            }
-            catch
-            {
-                return 1f;
-            }
+            try { return vessel == null ? 1f : Mathf.Max(0.01f, (float)vessel.GetTotalMass()); }
+            catch { return 1f; }
         }
 
         private void RestoreAll()
@@ -704,21 +649,34 @@ namespace AdaptivePulseRCS
             RestoreReactionWheels();
             ResetPulseState();
             selectedModuleCount = 0;
-            selectedRotationModules = 0;
-            selectedTranslationModules = 0;
-            selectedForce = 0f;
-            selectedTorque = 0f;
+            selectedThrusterCandidates = 0;
+            selectedTorqueAuthority = Vector3.zero;
+            selectedForceAuthority = Vector3.zero;
         }
 
         private void ResetPulseState()
         {
-            rotationPulse.Reset();
-            translationPulse.Reset();
+            pitchPulse.Reset();
+            rollPulse.Reset();
+            yawPulse.Reset();
+            xPulse.Reset();
+            zPulse.Reset();
+            yPulse.Reset();
         }
 
         private static float MaxAbs(Vector3 v)
         {
             return Mathf.Max(Mathf.Abs(v.x), Mathf.Abs(v.y), Mathf.Abs(v.z));
+        }
+
+        private static float Axis(Vector3 v, int axis)
+        {
+            return axis == 0 ? v.x : (axis == 1 ? v.y : v.z);
+        }
+
+        private static string FormatVector(Vector3 v)
+        {
+            return v.x.ToString("F2") + "/" + v.y.ToString("F2") + "/" + v.z.ToString("F2");
         }
 
         public void Update()
@@ -771,7 +729,6 @@ namespace AdaptivePulseRCS
                 hotkeyAlt = Input.GetKey(KeyCode.LeftAlt) || Input.GetKey(KeyCode.RightAlt);
                 waitingForHotkey = false;
                 SaveSettings();
-
                 Debug.Log("[AdaptivePulseRCS] Hotkey changed to " + HotkeyLabel());
                 return;
             }
@@ -806,13 +763,7 @@ namespace AdaptivePulseRCS
         {
             get
             {
-                return Path.Combine(
-                    KSPUtil.ApplicationRootPath,
-                    "GameData",
-                    "AdaptivePulseRCS",
-                    "PluginData",
-                    "Settings.cfg"
-                );
+                return Path.Combine(KSPUtil.ApplicationRootPath, "GameData", "AdaptivePulseRCS", "PluginData", "Settings.cfg");
             }
         }
 
@@ -836,8 +787,10 @@ namespace AdaptivePulseRCS
                 if (bool.TryParse(n.GetValue("ctrl"), out parsedBool)) hotkeyCtrl = parsedBool;
                 if (bool.TryParse(n.GetValue("shift"), out parsedBool)) hotkeyShift = parsedBool;
                 if (bool.TryParse(n.GetValue("alt"), out parsedBool)) hotkeyAlt = parsedBool;
+                if (bool.TryParse(n.GetValue("precisionMode"), out parsedBool)) precisionMode = parsedBool;
 
-                Debug.Log("[AdaptivePulseRCS] Settings loaded hotkey=" + HotkeyLabel());
+                Debug.Log("[AdaptivePulseRCS] Settings loaded hotkey=" + HotkeyLabel() +
+                          " precisionMode=" + precisionMode);
             }
             catch (Exception ex)
             {
@@ -858,6 +811,7 @@ namespace AdaptivePulseRCS
                 n.AddValue("ctrl", hotkeyCtrl);
                 n.AddValue("shift", hotkeyShift);
                 n.AddValue("alt", hotkeyAlt);
+                n.AddValue("precisionMode", precisionMode);
                 n.Save(SettingsPath);
             }
             catch (Exception ex)
@@ -871,12 +825,7 @@ namespace AdaptivePulseRCS
             if (!HighLogic.LoadedSceneIsFlight || !showWindow)
                 return;
 
-            window = GUILayout.Window(
-                GetInstanceID(),
-                window,
-                DrawWindow,
-                "Adaptive Pulse RCS - Beta 1.4"
-            );
+            window = GUILayout.Window(GetInstanceID(), window, DrawWindow, "Adaptive Pulse RCS - Beta 1.5");
         }
 
         private void DrawWindow(int id)
@@ -884,50 +833,42 @@ namespace AdaptivePulseRCS
             bool oldValue = enabledController;
             enabledController = GUILayout.Toggle(enabledController, "Automatic adaptive pulse control");
 
-            if (oldValue && !enabledController)
-            {
-                RestoreAll();
-            }
-            else if (!oldValue && enabledController)
-            {
-                ScanModules();
-            }
+            if (oldValue && !enabledController) RestoreAll();
+            else if (!oldValue && enabledController) ScanModules();
 
             rcsPriorityMode = GUILayout.Toggle(rcsPriorityMode, "RCS priority (suppress reaction wheels)");
 
+            bool oldPrecision = precisionMode;
+            precisionMode = GUILayout.Toggle(precisionMode, "Precision / docking mode");
+            if (oldPrecision != precisionMode)
+                SaveSettings();
+
             GUILayout.Label("Vessel: " + (vessel != null ? vessel.vesselName : "NONE"));
             GUILayout.Label("RCS modules: " + modules.Count + " | Thrusters: " + thrusterCount);
-            GUILayout.Label("Selected: " + selectedModuleCount +
-                            " (ROT " + selectedRotationModules +
-                            " / TRANS " + selectedTranslationModules + ")");
+            GUILayout.Label("Allocator: " + selectedThrusterCandidates + " thruster candidates -> " +
+                            selectedModuleCount + " active modules");
+
+            GUILayout.Label("Torque P/R/Y: " + FormatVector(selectedTorqueAuthority));
+            GUILayout.Label("Force X/Z/Y: " + FormatVector(selectedForceAuthority));
+            GUILayout.Label("Inertia P/R/Y: " + FormatVector(inertiaEstimate));
 
             GUILayout.Space(4);
-            GUILayout.Label("Pitch/Roll/Yaw: " +
-                rotationDemand.x.ToString("F2") + " / " +
-                rotationDemand.y.ToString("F2") + " / " +
-                rotationDemand.z.ToString("F2"));
-
-            GUILayout.Label("X/Z/Y translation: " +
-                translationDemand.x.ToString("F2") + " / " +
-                translationDemand.y.ToString("F2") + " / " +
-                translationDemand.z.ToString("F2"));
-
-            GUILayout.Label("ROT pulse: " + rotationPulse.LastPulse.ToString("F3") +
-                            " s - " + (rotationPulse.GateOn ? "FIRING" : "idle"));
-            GUILayout.Label("TRANS pulse: " + translationPulse.LastPulse.ToString("F3") +
-                            " s - " + (translationPulse.GateOn ? "FIRING" : "idle"));
+            GUILayout.Label("ROT pulses P/R/Y: " +
+                            pitchPulse.LastPulse.ToString("F3") + " / " +
+                            rollPulse.LastPulse.ToString("F3") + " / " +
+                            yawPulse.LastPulse.ToString("F3") + " s");
+            GUILayout.Label("TRANS pulses X/Z/Y: " +
+                            xPulse.LastPulse.ToString("F3") + " / " +
+                            zPulse.LastPulse.ToString("F3") + " / " +
+                            yPulse.LastPulse.ToString("F3") + " s");
 
             GUILayout.Space(4);
             GUILayout.Label("Window hotkey: " + HotkeyLabel());
 
             if (waitingForHotkey)
-            {
                 GUILayout.Label("Press the new key combination (Esc cancels)");
-            }
             else if (GUILayout.Button("Change hotkey"))
-            {
                 BeginHotkeyCapture();
-            }
 
             if (GUILayout.Button("Re-scan vessel"))
                 ScanModules();
