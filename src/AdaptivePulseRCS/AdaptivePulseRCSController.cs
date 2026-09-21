@@ -548,8 +548,26 @@ namespace AdaptivePulseRCS
 
         private void RestoreModuleStates()
         {
-            // Beta 1.7: no per-part RCS state restoration is required because the
-            // controller no longer mutates ModuleRCS.rcsEnabled/thrustPercentage.
+            // Beta 1.7+: no automatic writes here. RCS enable/disable state belongs
+            // to the player/RO and must not be overwritten every control frame.
+        }
+
+        private void EnableAllRcsModules()
+        {
+            int enabledCount = 0;
+
+            foreach (ModuleModel model in modules)
+            {
+                if (model.Module == null)
+                    continue;
+
+                model.Module.rcsEnabled = true;
+                model.OriginalEnabled = true;
+                enabledCount++;
+            }
+
+            Debug.Log("[AdaptivePulseRCS] Player requested Enable All RCS modules: " + enabledCount);
+            ScanModules();
         }
 
         private void SetReactionWheelPriority(bool suppress)
@@ -881,6 +899,9 @@ namespace AdaptivePulseRCS
 
             if (GUILayout.Button("Re-scan vessel"))
                 ScanModules();
+
+            if (GUILayout.Button("Enable all RCS modules"))
+                EnableAllRcsModules();
 
             if (GUILayout.Button("Restore stock RCS"))
             {
