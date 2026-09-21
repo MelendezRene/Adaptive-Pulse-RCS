@@ -189,7 +189,8 @@ namespace AdaptivePulseRCS
             RestoreAll();
 
             if (vessel != null)
-                vessel.OnPostAutopilotUpdate -= ProcessControls;
+                vessel.OnPostAutopilotUpdate -= CaptureAutopilotControls;
+                vessel.OnFlyByWire -= ProcessControls;
 
             vessel = v;
 
@@ -458,7 +459,7 @@ namespace AdaptivePulseRCS
 
             foreach (ModuleModel model in modules)
             {
-                if (model.Module == null || !model.OriginalEnabled)
+                if (model.Module == null || !model.Module.rcsEnabled)
                     continue;
 
                 if (!AxisEnabled(model.Module, rotation, axis))
@@ -540,26 +541,15 @@ namespace AdaptivePulseRCS
 
         private void ApplyModuleSelection()
         {
-            foreach (ModuleModel model in modules)
-            {
-                if (model.Module == null)
-                    continue;
-
-                model.Module.rcsEnabled = model.OriginalEnabled && model.Selected;
-                model.Module.thrustPercentage = model.OriginalThrustPercentage;
-            }
+            // Beta 1.7: do not write ModuleRCS.rcsEnabled or thrustPercentage here.
+            // Those are persistent/player-owned settings (and may also be managed by RO).
+            // Selection is internal; pulse gating is applied to FlightCtrlState instead.
         }
 
         private void RestoreModuleStates()
         {
-            foreach (ModuleModel model in modules)
-            {
-                if (model.Module == null)
-                    continue;
-
-                model.Module.rcsEnabled = model.OriginalEnabled;
-                model.Module.thrustPercentage = model.OriginalThrustPercentage;
-            }
+            // Beta 1.7: no per-part RCS state restoration is required because the
+            // controller no longer mutates ModuleRCS.rcsEnabled/thrustPercentage.
         }
 
         private void SetReactionWheelPriority(bool suppress)
