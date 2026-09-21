@@ -1,0 +1,65 @@
+name: Publish Beta 1.4
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - ".github/workflows/publish-beta14.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download stripped KSP 1.12.5 libraries
+        run: |
+          wget --quiet https://github.com/KSPModdingLibs/KSPLibs/raw/main/KSP-1.12.5.zip -O /tmp/ksp.zip
+          unzip -q /tmp/ksp.zip -d /tmp/ksp
+
+      - name: Restore
+        env:
+          KSP_ROOT: /tmp/ksp
+        run: dotnet restore src/AdaptivePulseRCS/AdaptivePulseRCS.csproj
+
+      - name: Build Beta 1.4
+        env:
+          KSP_ROOT: /tmp/ksp
+        run: dotnet build src/AdaptivePulseRCS/AdaptivePulseRCS.csproj -c Release -p:KSPBT_ManagedPath=/tmp/ksp/KSP_x64_Data/Managed --no-restore
+
+      - name: Verify compiled DLL
+        run: |
+          test -f GameData/AdaptivePulseRCS/Plugins/AdaptivePulseRCS.dll
+          ls -lh GameData/AdaptivePulseRCS/Plugins/AdaptivePulseRCS.dll
+
+      - name: Commit compiled DLL to repository
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f GameData/AdaptivePulseRCS/Plugins/AdaptivePulseRCS.dll
+          if ! git diff --cached --quiet; then
+            git commit -m "Include compiled AdaptivePulseRCS Beta 1.4 DLL [skip ci]"
+            git push origin HEAD:main
+          fi
+
+      - name: Package installable ZIP
+        run: |
+          mkdir -p release
+          zip -r release/AdaptivePulseRCS-v0.3.4-b1.4.zip GameData/AdaptivePulseRCS
+
+      - name: Publish GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view v0.3.4-b1.4 >/dev/null 2>&1; then
+            gh release upload v0.3.4-b1.4 release/AdaptivePulseRCS-v0.3.4-b1.4.zip --clobber
+          else
+            gh release create v0.3.4-b1.4               release/AdaptivePulseRCS-v0.3.4-b1.4.zip               --title "Adaptive Pulse RCS Beta 1.4"               --target main               --prerelease               --notes "First public Beta 1.4 prerelease. Adds stock toolbar access, in-game configurable hotkey with persistence, split rotation/translation pulse channels, module-level RCS selection, improved RO-oriented authority calculations, reaction-wheel priority handling, restoration of stock RCS states, and expanded diagnostics."
+          fi
