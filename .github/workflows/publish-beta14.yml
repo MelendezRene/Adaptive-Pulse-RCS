@@ -1,4 +1,4 @@
-name: Publish Beta 1.5
+name: Publish Beta 1.6
 
 on:
   push:
@@ -29,7 +29,7 @@ jobs:
           KSP_ROOT: /tmp/ksp
         run: dotnet restore src/AdaptivePulseRCS/AdaptivePulseRCS.csproj
 
-      - name: Build Beta 1.5
+      - name: Build Beta 1.6
         env:
           KSP_ROOT: /tmp/ksp
         run: dotnet build src/AdaptivePulseRCS/AdaptivePulseRCS.csproj -c Release -p:KSPBT_ManagedPath=/tmp/ksp/KSP_x64_Data/Managed --no-restore
@@ -45,21 +45,21 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -f GameData/AdaptivePulseRCS/Plugins/AdaptivePulseRCS.dll
           if ! git diff --cached --quiet; then
-            git commit -m "Include compiled AdaptivePulseRCS Beta 1.5 DLL [skip ci]"
+            git commit -m "Include compiled AdaptivePulseRCS Beta 1.6 DLL [skip ci]"
             git push origin HEAD:main
           fi
 
       - name: Package installable ZIP
         run: |
           mkdir -p release
-          zip -r release/AdaptivePulseRCS-v0.3.4-b1.5.zip GameData/AdaptivePulseRCS
+          zip -r release/AdaptivePulseRCS-v0.3.5-b1.6.zip GameData/AdaptivePulseRCS
 
       - name: Publish GitHub prerelease
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view v0.3.4-b1.5 >/dev/null 2>&1; then
-            gh release upload v0.3.4-b1.5 release/AdaptivePulseRCS-v0.3.4-b1.5.zip --clobber
+          if gh release view v0.3.5-b1.6 >/dev/null 2>&1; then
+            gh release upload v0.3.5-b1.6 release/AdaptivePulseRCS-v0.3.5-b1.6.zip --clobber
           else
-            gh release create v0.3.4-b1.5 release/AdaptivePulseRCS-v0.3.4-b1.5.zip --title "Adaptive Pulse RCS Beta 1.5" --target main --prerelease --notes "Adaptive Pulse RCS Beta 1.5 prerelease."
+            gh release create v0.3.5-b1.6 release/AdaptivePulseRCS-v0.3.5-b1.6.zip --title "Adaptive Pulse RCS Beta 1.6" --target main --prerelease --notes "Adaptive Pulse RCS Beta 1.6 prerelease."
           fi
