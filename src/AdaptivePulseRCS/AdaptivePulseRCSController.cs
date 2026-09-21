@@ -28,6 +28,8 @@ namespace AdaptivePulseRCS
 
         private Vector3 rotationDemand;
         private Vector3 translationDemand;
+        private FlightCtrlState latestFinalState;
+        private bool haveFinalState;
 
         private readonly PulseChannel pitchPulse = new PulseChannel();
         private readonly PulseChannel rollPulse = new PulseChannel();
@@ -124,7 +126,8 @@ namespace AdaptivePulseRCS
             RemoveToolbarButton();
 
             if (vessel != null)
-                vessel.OnPostAutopilotUpdate -= ProcessControls;
+                vessel.OnPostAutopilotUpdate -= CaptureAutopilotControls;
+                vessel.OnFlyByWire -= ProcessControls;
 
             if (toolbarIcon != null)
                 Destroy(toolbarIcon);
@@ -192,7 +195,8 @@ namespace AdaptivePulseRCS
 
             if (vessel != null)
             {
-                vessel.OnPostAutopilotUpdate += ProcessControls;
+                vessel.OnPostAutopilotUpdate += CaptureAutopilotControls;
+                vessel.OnFlyByWire += ProcessControls;
                 Debug.Log("[AdaptivePulseRCS] Attached to vessel: " + vessel.vesselName);
                 ScanModules();
             }
@@ -290,6 +294,14 @@ namespace AdaptivePulseRCS
             }
         }
 
+        private void CaptureAutopilotControls(FlightCtrlState state)
+        {
+            if (state == null) return;
+            latestFinalState = new FlightCtrlState();
+            latestFinalState.CopyFrom(state);
+            haveFinalState = true;
+        }
+
         private void ProcessControls(FlightCtrlState state)
         {
             if (!enabledController || vessel == null || !vessel.ActionGroups[KSPActionGroup.RCS])
@@ -302,8 +314,19 @@ namespace AdaptivePulseRCS
                 return;
             }
 
-            rotationDemand = new Vector3(state.pitch, state.roll, state.yaw);
-            translationDemand = new Vector3(state.X, state.Z, state.Y);
+            // OnFlyByWire is where we gate the controls that KSP will actually apply.
+            // MechJeb/SAS may write their commands during the autopilot pass, so retain
+            // that final autopilot state and merge it with any direct/manual input.
+            FlightCtrlState demandState = haveFinalState && latestFinalState != null ? latestFinalState : state;
+            float pitchDemand = Mathf.Abs(demandState.pitch) >= Mathf.Abs(state.pitch) ? demandState.pitch : state.pitch;
+            float rollDemand = Mathf.Abs(demandState.roll) >= Mathf.Abs(state.roll) ? demandState.roll : state.roll;
+            float yawDemand = Mathf.Abs(demandState.yaw) >= Mathf.Abs(state.yaw) ? demandState.yaw : state.yaw;
+            float xDemand = Mathf.Abs(demandState.X) >= Mathf.Abs(state.X) ? demandState.X : state.X;
+            float zDemand = Mathf.Abs(demandState.Z) >= Mathf.Abs(state.Z) ? demandState.Z : state.Z;
+            float yDemand = Mathf.Abs(demandState.Y) >= Mathf.Abs(state.Y) ? demandState.Y : state.Y;
+
+            rotationDemand = new Vector3(pitchDemand, rollDemand, yawDemand);
+            translationDemand = new Vector3(xDemand, zDemand, yDemand);
 
             float currentMass = SafeMass();
             if (Mathf.Abs(currentMass - lastScanMass) > Mathf.Max(0.10f, lastScanMass * 0.02f))
