@@ -14,7 +14,7 @@ namespace AdaptivePulseRCS
         private const float MinOffTime = 0.10f;
         private const float InputDeadband = 0.025f;
         private const float AuthorityEpsilon = 0.0001f;
-        private const float CouplingPenalty = 0.35f;
+        private const float CouplingPenalty = 0.12f;
 
         private Vessel vessel;
         private bool enabledController = true;
@@ -96,7 +96,7 @@ namespace AdaptivePulseRCS
 
         public void Start()
         {
-            Debug.Log("[AdaptivePulseRCS] Beta 1.5 starting - per-axis adaptive allocator");
+            Debug.Log("[AdaptivePulseRCS] Beta 1.6 starting - RO-safe per-axis adaptive allocator");
             LoadSettings();
 
             GameEvents.onVesselChange.Add(OnVesselChange);
@@ -452,7 +452,7 @@ namespace AdaptivePulseRCS
                     Vector3 crossVector = rotation ? thruster.ForceLocal : thruster.TorqueLocal;
                     coupling += 0.5f * crossVector.magnitude;
 
-                    float score = primary - (coupling * CouplingPenalty);
+                    float score = primary / (primary + coupling * CouplingPenalty + AuthorityEpsilon);
                     if (score <= AuthorityEpsilon)
                         continue;
 
@@ -466,7 +466,7 @@ namespace AdaptivePulseRCS
             if (winners.Count == 0)
                 return;
 
-            float threshold = bestScore * (precisionMode ? 0.75f : 0.45f);
+            float threshold = bestScore * (precisionMode ? 0.55f : 0.30f);
 
             foreach (ThrusterModel thruster in winners)
             {
@@ -475,7 +475,7 @@ namespace AdaptivePulseRCS
                 float coupling = OtherAxesMagnitude(authorityVector, axis);
                 Vector3 crossVector = rotation ? thruster.ForceLocal : thruster.TorqueLocal;
                 coupling += 0.5f * crossVector.magnitude;
-                float score = primary - (coupling * CouplingPenalty);
+                float score = primary / (primary + coupling * CouplingPenalty + AuthorityEpsilon);
 
                 if (score < threshold)
                     continue;
@@ -825,7 +825,7 @@ namespace AdaptivePulseRCS
             if (!HighLogic.LoadedSceneIsFlight || !showWindow)
                 return;
 
-            window = GUILayout.Window(GetInstanceID(), window, DrawWindow, "Adaptive Pulse RCS - Beta 1.5");
+            window = GUILayout.Window(GetInstanceID(), window, DrawWindow, "Adaptive Pulse RCS - Beta 1.6");
         }
 
         private void DrawWindow(int id)
