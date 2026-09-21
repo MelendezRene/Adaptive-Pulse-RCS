@@ -36,10 +36,10 @@ jobs:
       - name: Package Beta
         run: |
           mkdir -p release
-          zip -r release/AdaptivePulseRCS-v0.3.4-b1.4.zip GameData/AdaptivePulseRCS
+          zip -r release/AdaptivePulseRCS-v0.4.0-b2.0.zip GameData/AdaptivePulseRCS
 
       - uses: actions/upload-artifact@v4
         with:
-          name: AdaptivePulseRCS-v0.3.4-b1.4
-          path: release/AdaptivePulseRCS-v0.3.4-b1.4.zip
+          name: AdaptivePulseRCS-v0.4.0-b2.0
+          path: release/AdaptivePulseRCS-v0.4.0-b2.0.zip
           if-no-files-found: error
